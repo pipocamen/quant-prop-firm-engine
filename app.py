@@ -37,7 +37,7 @@ aba1, aba2, aba3, aba4 = st.tabs([
 ])
 
 # ==========================================
-# ABA 1: GESTÃO DE CONTAS (MANTIDA INTACTA)
+# ABA 1: GESTÃO DE CONTAS
 # ==========================================
 with aba1:
     col_form, col_lista = st.columns([1, 2])
@@ -68,7 +68,7 @@ with aba1:
                 st.rerun()
 
 # ==========================================
-# ABA 2: PAINEL DE PORTFÓLIO (MANTIDO INTACTO)
+# ABA 2: PAINEL DE PORTFÓLIO
 # ==========================================
 with aba2:
     if not st.session_state.contas.empty:
@@ -148,90 +148,100 @@ with aba3:
         st.code(codigo_export, language="javascript" if "Tradovate" in plataforma_alvo else "cpp")
 
 # ==========================================
-# ABA 4: VISÃO BOOKMAP (MAPA DE LIQUIDEZ SINTÉTICO)
+# ABA 4: VISÃO BOOKMAP (MAPA DE LIQUIDEZ E PREÇO)
 # ==========================================
 with aba4:
-    st.subheader(f"🔍 Bookmap Sintético e Pontos de Execução")
+    st.subheader(f"🔍 Visão de Mercado Institucional (Fundo Branco)")
     
     if st.session_state.df_backtest.empty:
-        st.warning("⚠️ Você precisa rodar o Backtest na aba 'Motor Quant' primeiro para gerar o mapa de liquidez.")
+        st.warning("⚠️ Você precisa rodar o Backtest na aba 'Motor Quant' primeiro para gerar a visualização.")
     else:
         df_bk = st.session_state.df_backtest.copy()
+        df_bk = df_bk.tail(200) # Limita para não pesar no navegador
         
-        # Filtra os últimos 200 candles para não pesar a renderização do Heatmap 3D
-        df_bk = df_bk.tail(200)
+        st.markdown(f"**Ativo:** {st.session_state.ativo_atual} | Exibindo últimos 200 candles.")
         
-        st.markdown(f"**Ativo:** {st.session_state.ativo_atual} | Exibindo mapa de densidade de volume dos últimos 200 candles.")
+        fig_bookmap = go.Figure()
         
-        # Algoritmo de Criação do Heatmap (Volume Profile ao longo do tempo)
+        # Algoritmo de Criação do Heatmap Sintético
         min_price = df_bk['Low'].min()
         max_price = df_bk['High'].max()
         price_bins = np.linspace(min_price, max_price, 50)
-        
         heatmap_z = np.zeros((len(price_bins), len(df_bk)))
         
         for i in range(len(df_bk)):
             l, h, v = df_bk['Low'].iloc[i], df_bk['High'].iloc[i], df_bk['Volume'].iloc[i]
             for j, p in enumerate(price_bins):
                 if l <= p <= h:
-                    heatmap_z[j, i] = v  # Distribui o volume onde o preço passou
-        
-        # Plotagem do Bookmap Sintético
-        fig_bookmap = go.Figure()
-        
-        # Camada 1: O Fundo de Liquidez (Heatmap)
+                    heatmap_z[j, i] = v
+                    
+        # Camada 1: O Fundo de Liquidez (Heatmap Sintético em tons pasteis/claros para ornar com fundo branco)
         fig_bookmap.add_trace(go.Heatmap(
             z=heatmap_z,
             x=df_bk.index,
             y=price_bins,
-            colorscale='Inferno',
-            showscale=True,
-            colorbar=dict(title="Liquidez"),
-            opacity=0.7,
+            colorscale='Blues', # Alterado para tons de azul para ficar legível no fundo branco
+            showscale=False,
+            opacity=0.3, # Bem suave para não ofuscar os candles
             name="Depth/Volume"
         ))
         
-        # Camada 2: A Ação do Preço (Candles)
+        # Camada 2: Ação do Preço (Candles Azuis e Cinzas - Estilo Institucional TradingView)
         fig_bookmap.add_trace(go.Candlestick(
             x=df_bk.index,
             open=df_bk['Open'], high=df_bk['High'], low=df_bk['Low'], close=df_bk['Close'],
             name="Preço",
-            increasing_line_color='rgba(0, 255, 0, 0.8)',
-            decreasing_line_color='rgba(255, 0, 0, 0.8)'
+            increasing_line_color='#2962FF',
+            increasing_fillcolor='#2962FF',
+            decreasing_line_color='#787B86',
+            decreasing_fillcolor='#787B86'
         ))
         
-        # Camada 3: Marcações de Entrada Automáticas
+        # Camada 3: Marcações de Entrada e Saída
         sinais_ativos = st.session_state.sinais_gerados
         if sinais_ativos:
-            sinal_principal = sinais_ativos[0] # Pega o primeiro setup selecionado
+            sinal_principal = sinais_ativos[0]
             entradas = df_bk[df_bk[sinal_principal] == 1]
-            saidas = df_bk[df_bk[sinal_principal] == -1] # Caso haja lógica de venda/short
             
-            # Plota Setas de Compra (Triângulo Verde Ciano)
+            # Setas de Compra
             fig_bookmap.add_trace(go.Scatter(
                 x=entradas.index, y=entradas['Low'] * 0.998,
-                mode='markers', marker=dict(symbol='triangle-up', size=16, color='cyan', line=dict(color='white', width=1)),
-                name='Entrada Automática (Long)'
+                mode='markers', marker=dict(symbol='triangle-up', size=16, color='#2962FF', line=dict(color='black', width=1)),
+                name='Entrada (Long)'
             ))
             
-            # Simulação de Saída de Take Profit (Traça uma linha 3 candles depois)
+            # Alvos
             if not entradas.empty:
                 tp_index = [df_bk.index[min(df_bk.index.get_loc(idx) + 3, len(df_bk)-1)] for idx in entradas.index]
-                tp_prices = entradas['Close'] + (risco_por_trade * 2.0 / 100) # Preço de saída estipulado genérico
+                tp_prices = entradas['Close'] + (risco_por_trade * 2.0 / 100) 
                 fig_bookmap.add_trace(go.Scatter(
                     x=tp_index, y=tp_prices,
-                    mode='markers', marker=dict(symbol='star', size=14, color='gold'),
-                    name='Saída (Take Profit / Alvo)'
+                    mode='markers', marker=dict(symbol='star', size=14, color='#FF9800', line=dict(color='black', width=1)),
+                    name='Alvo Projetado'
                 ))
 
+        # Estilização: Fundo Branco (Light Mode) e Eixo Y na Direita
         fig_bookmap.update_layout(
-            template='plotly_dark',
+            template='plotly_white',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(color='#131722'),
             height=700,
             xaxis_rangeslider_visible=False,
-            title="Bookmap Visualizer: Injeção de Liquidez vs Price Action",
-            yaxis_title="Preço ($)"
+            title="Análise Institucional de Preço e Liquidez",
+            yaxis_title="Preço ($)",
+            xaxis=dict(
+                showgrid=True, 
+                gridcolor='#E1E5EA', 
+                zerolinecolor='#E1E5EA'
+            ),
+            yaxis=dict(
+                showgrid=True, 
+                gridcolor='#E1E5EA', 
+                zerolinecolor='#E1E5EA',
+                side='right' # Eixo na direita igual ao TradingView
+            ),
+            margin=dict(l=20, r=20, t=50, b=20)
         )
         
         st.plotly_chart(fig_bookmap, use_container_width=True)
-        
-        st.info("💡 **Como ler esta tela:** As áreas mais brilhantes (amarelo/laranja) mostram nós de alta liquidez e forte briga institucional. Quando o seu sinal de entrada (Ciano) pisca em cima ou logo após capturar a liquidez de uma zona brilhante inferior, confirma-se o viés do algoritmo.")
